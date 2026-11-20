@@ -11,7 +11,7 @@ from pypdf import PdfWriter, PdfReader
 TOKEN = os.environ["BOT_TOKEN"]
 OWNER = int(os.environ.get("OWNER_ID", "0"))  # your Telegram ID (locks bot to you)
 client = genai.Client(api_key=os.environ["GEMINI_KEY"])
-MODEL = "gemini-2.5-flash"  # change if AI Studio shows a newer free model
+MODEL = "gemini-3.8-flash"  # change if AI Studio shows a newer free model
 
 SYSTEM = """You are a smart all-round personal assistant inside Telegram, like ChatGPT. You can help with anything: studies, coding, writing, math, career, ideas, planning, translation, explanations. Give complete, high-quality answers.
 Reply ONLY with JSON in this shape:
