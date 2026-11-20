@@ -13,7 +13,7 @@ OWNER = int(os.environ.get("OWNER_ID", "0"))  # your Telegram ID (locks bot to y
 client = genai.Client(api_key=os.environ["GEMINI_KEY"])
 MODEL = "gemini-2.5-flash"  # change if AI Studio shows a newer free model
 
-SYSTEM = """You are a personal assistant inside Telegram.
+SYSTEM = """You are a smart all-round personal assistant inside Telegram, like ChatGPT. You can help with anything: studies, coding, writing, math, career, ideas, planning, translation, explanations. Give complete, high-quality answers.
 Reply ONLY with JSON in this shape:
 {"action":"pdf|chat|remind","reply":"short message to user","title":"pdf title","content":"full document text","minutes":0,"task":"reminder text"}
 - Use "pdf" when the user wants a document, notes, assignment, report, summary, answers, resume, or any file. Put the COMPLETE content in "content" using plain text, '# ' for headings and '- ' for bullets.
@@ -54,9 +54,12 @@ def make_pdf(title, content):
                            new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
 
-def ask(prompt):
+def ask(prompt, image=None):
+    parts = [prompt]
+    if image:
+        parts.append(types.Part.from_bytes(data=image, mime_type="image/jpeg"))
     r = client.models.generate_content(
-        model=MODEL, contents=prompt,
+        model=MODEL, contents=parts,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM,
             response_mime_type="application/json"))
@@ -87,7 +90,12 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("Working on it...")
     try:
-        d = await asyncio.to_thread(ask, update.message.text)
+        h = ctx.user_data.setdefault("h", [])
+        convo = "\n".join(h[-16:])
+        d = await asyncio.to_thread(
+            ask, f"Conversation so far:\n{convo}\n\nUser: {update.message.text}")
+        h.append("User: " + update.message.text[:1500])
+        h.append("Assistant: " + (d.get("reply") or d.get("title") or "")[:1500])
         act = d.get("action", "chat")
         if act == "pdf":
             pdf = make_pdf(d.get("title", "Document"), d.get("content", ""))
@@ -137,6 +145,25 @@ async def on_pdf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         n = len(ctx.user_data["pdfs"])
         await update.message.reply_text(f"{n} PDF(s) queued. Send more or /merge")
 
+async def on_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ok(update):
+        return
+    await update.message.reply_text("Looking at it...")
+    try:
+        f = await update.message.photo[-1].get_file()
+        img = bytes(await f.download_as_bytearray())
+        q = update.message.caption or "Describe this image and help me with it."
+        d = await asyncio.to_thread(ask, q, img)
+        if d.get("action") == "pdf":
+            pdf = make_pdf(d.get("title", "Result"), d.get("content", ""))
+            await update.message.reply_document(
+                io.BytesIO(pdf), filename="result.pdf",
+                caption=d.get("reply", ""))
+        else:
+            await update.message.reply_text(d.get("reply", "..."))
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+
 async def merge(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ok(update):
         return
@@ -155,7 +182,8 @@ async def merge(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["pdfs"] = []
-    await update.message.reply_text("Cleared.")
+    ctx.user_data["h"] = []
+    await update.message.reply_text("Cleared PDFs and chat memory.")
 
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
@@ -164,6 +192,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("myid", myid))
     app.add_handler(CommandHandler("merge", merge))
     app.add_handler(CommandHandler("clear", clear))
+    app.add_handler(MessageHandler(filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, on_pdf))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.run_polling()
